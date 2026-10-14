@@ -1,0 +1,132 @@
+name: Build and test
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+  # The standard Apple Silicon runner has 7 GB RAM.
+  CARGO_BUILD_JOBS: 2
+
+jobs:
+  applications:
+    name: ${{ matrix.platform }} (${{ matrix.arch }})
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix:
+        # Standard GitHub-hosted runners: free for public repositories.
+        # Avoid -latest aliases so the OS/architecture cannot silently switch.
+        include:
+          - platform: Linux
+            arch: x86_64
+            os: ubuntu-24.04
+            target: x86_64-unknown-linux-gnu
+            artifact: fin-linux-x86_64
+            extension: tar.gz
+          - platform: Linux
+            arch: arm64
+            os: ubuntu-24.04-arm
+            target: aarch64-unknown-linux-gnu
+            artifact: fin-linux-arm64
+            extension: tar.gz
+          - platform: macOS
+            arch: x86_64
+            os: macos-15-intel
+            target: x86_64-apple-darwin
+            artifact: fin-macos-x86_64
+            extension: tar.gz
+          - platform: macOS
+            arch: arm64
+            os: macos-15
+            target: aarch64-apple-darwin
+            artifact: fin-macos-arm64
+            extension: tar.gz
+          - platform: Windows
+            arch: x86_64
+            os: windows-2025
+            target: x86_64-pc-windows-msvc
+            artifact: fin-windows-x86_64
+            extension: zip
+          - platform: Windows
+            arch: arm64
+            os: windows-11-arm
+            target: aarch64-pc-windows-msvc
+            artifact: fin-windows-arm64
+            extension: zip
+    runs-on: ${{ matrix.os }}
+    env:
+      RUST_TARGET: ${{ matrix.target }}
+      ARTIFACT_NAME: ${{ matrix.artifact }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+          targets: ${{ matrix.target }}
+      - name: Install Linux dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install --no-install-recommends -y build-essential pkg-config fonts-dejavu-core libfontconfig1-dev libxkbcommon-dev libwayland-dev libx11-dev libxcb1-dev
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: ${{ matrix.target }}
+          save-if: ${{ github.event_name != 'pull_request' }}
+      - name: Check formatting
+        run: cargo fmt --all --check
+      - name: Test both interfaces
+        run: cargo test --locked --target ${{ matrix.target }} --all-targets --all-features
+      - name: Test without desktop features
+        run: cargo test --locked --target ${{ matrix.target }} --no-default-features --features tui --all-targets
+      - name: Lint
+        run: cargo clippy --locked --target ${{ matrix.target }} --all-targets --all-features -- -D warnings
+      - name: Lint without desktop features
+        run: cargo clippy --locked --target ${{ matrix.target }} --no-default-features --features tui --all-targets -- -D warnings
+      - name: Build both applications
+        run: cargo build --release --locked --target ${{ matrix.target }} --all-features --bins
+      - name: Build standalone terminal application
+        run: cargo build --release --locked --target ${{ matrix.target }} --no-default-features --features tui --bin fin-tui
+      - name: Package Linux and macOS
+        if: runner.os != 'Windows'
+        shell: bash
+        run: |
+          package="dist/$ARTIFACT_NAME"
+          mkdir -p "$package/assets"
+          cp "target/$RUST_TARGET/release/fin" "$package/fin"
+          cp "target/$RUST_TARGET/release/fin-tui" "$package/fin-tui"
+          chmod +x "$package/fin" "$package/fin-tui"
+          cp README.md "$package/"
+          cp assets/FONT-LICENSE.txt "$package/assets/"
+          cp -R docs examples "$package/"
+          tar -czf "dist/$ARTIFACT_NAME.tar.gz" -C dist "$ARTIFACT_NAME"
+      - name: Package Windows
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $package = "dist/$env:ARTIFACT_NAME"
+          New-Item -ItemType Directory -Force -Path "$package/assets" | Out-Null
+          Copy-Item "target/$env:RUST_TARGET/release/fin.exe" "$package/fin.exe"
+          Copy-Item "target/$env:RUST_TARGET/release/fin-tui.exe" "$package/fin-tui.exe"
+          Copy-Item README.md "$package/"
+          Copy-Item assets/FONT-LICENSE.txt "$package/assets/"
+          Copy-Item docs, examples "$package/" -Recurse
+          Compress-Archive -Path $package -DestinationPath "dist/$env:ARTIFACT_NAME.zip"
+      - uses: actions/upload-artifact@v7
+        with:
+          name: ${{ matrix.artifact }}.${{ matrix.extension }}
+          path: dist/${{ matrix.artifact }}.${{ matrix.extension }}
+          archive: false
+          if-no-files-found: error
+          retention-days: 14

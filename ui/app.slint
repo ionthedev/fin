@@ -1,0 +1,337 @@
+import { TextEdit, LineEdit, ComboBox, ScrollView, Palette } from "std-widgets.slint";
+import "../assets/LiberationMono-Regular.ttf";
+
+
+// Shared chrome colors; the diagram renderer uses the same canvas background.
+global AppColors {
+    out property <color> canvas: #13151b;
+    out property <color> surface: #1b1e27;
+    out property <color> hover: #272c38;
+    out property <color> border: #333846;
+    out property <color> text: #e5e7ef;
+    out property <color> secondary: #c4cada;
+    out property <color> muted: #a6adbf;
+    out property <color> accent: #b5a4ff;
+    out property <color> primary: #7563d5;
+    out property <color> selected: #302944;
+    out property <color> selected-text: #c6b8ff;
+    out property <color> error-background: #382329;
+    out property <color> error-border: #70404a;
+    out property <color> error-text: #f1b2b2;
+}
+
+export struct HitNode { id: string, x: float, y: float, w: float, h: float }
+export struct EdgeRow { index: int, description: string, label: string, kind: int }
+
+component ToolButton inherits Rectangle {
+    in property <string> text;
+    in property <string> hint: text;
+    in property <bool> active: false;
+    in property <bool> enabled: true;
+    in property <bool> primary: false;
+    callback clicked;
+    min-width: label.preferred-width + 24px;
+    height: 32px;
+    border-radius: 6px;
+    background: !enabled ? transparent : primary ? AppColors.primary : active ? AppColors.selected : touch.has-hover ? AppColors.hover : transparent;
+    opacity: enabled ? 1 : 0.35;
+    accessible-role: button;
+    accessible-label: hint;
+    accessible-enabled: enabled;
+    accessible-action-default => { if root.enabled { root.clicked(); } }
+    label := Text { text: root.text; color: root.primary ? white : root.active ? AppColors.selected-text : AppColors.secondary; font-size: 13px; horizontal-alignment: center; vertical-alignment: center; }
+    touch := TouchArea { enabled: root.enabled; mouse-cursor: pointer; clicked => { key.focus(); root.clicked(); } }
+    key := FocusScope { focus-on-click: false; key-pressed(e) => { if root.enabled && (e.text == " " || e.text == "\n") { root.clicked(); return accept; } return reject; } }
+}
+
+component Caption inherits Text { font-size: 11px; font-weight: 600; color: AppColors.muted; }
+component Divider inherits Rectangle { background: AppColors.border; height: 1px; }
+
+export component AppWindow inherits Window {
+    title: "Fin — " + root.document-name + (root.dirty ? " •" : "");
+    preferred-width: 1280px;
+    preferred-height: 820px;
+    min-width: 900px;
+    min-height: 600px;
+    background: AppColors.canvas;
+    default-font-family: "sans-serif";
+    default-font-size: 13px;
+    init => { Palette.color-scheme = ColorScheme.dark; }
+    in-out property <string> source;
+    in property <string> document-name: "Untitled.mmd";
+    in property <bool> dirty;
+    in property <bool> can-undo;
+    in property <bool> can-redo;
+    in property <bool> busy;
+    in property <string> error-message;
+    in property <string> status-message: "Ready";
+    in property <string> visual-note;
+    in property <bool> editable;
+    in property <image> diagram;
+    in property <image> detail;
+    in property <bool> detail-ready;
+    in property <float> detail-x;
+    in property <float> detail-y;
+    in property <float> detail-width;
+    in property <float> detail-height;
+    in property <float> detail-zoom;
+    in property <float> diagram-width: 600;
+    in property <float> diagram-height: 450;
+    in property <[HitNode]> nodes;
+    in property <[EdgeRow]> edges;
+    in property <string> selected-id;
+    in-out property <string> edit-label;
+    in-out property <int> edit-shape;
+    in-out property <string> direction: "TD";
+    in-out property <bool> connecting: false;
+    in-out property <string> connect-from;
+    in-out property <float> zoom: 1;
+    in-out property <bool> code-visible: true;
+    in-out property <int> selected-edge: -1;
+    in-out property <string> edge-label;
+    in-out property <int> edge-kind;
+    out property <float> canvas-width: canvas.width / 1px;
+    out property <float> canvas-height: canvas.height / 1px;
+    // Visible rectangle in unzoomed diagram coordinates. Negative origins are
+    // intentional when a small graph is centered inside the canvas.
+    out property <float> viewport-x: -(canvas.content-x + diagram-content.x) / 1px / root.zoom;
+    out property <float> viewport-y: -(canvas.content-y + diagram-content.y) / 1px / root.zoom;
+    out property <float> viewport-width: canvas.width / 1px / root.zoom;
+    out property <float> viewport-height: canvas.height / 1px / root.zoom;
+    callback command(string);
+    callback source-edited(string);
+    callback add-node(int);
+    callback select-node(string);
+    callback apply-node(string, int);
+    callback delete-node();
+    callback set-direction(string);
+    callback apply-edge(int, string, int);
+    callback delete-edge(int);
+
+    public function fit-diagram() {
+        root.zoom = max(0.15, min(1.4, min((canvas.width / 1px - 100) / root.diagram-width, (canvas.height / 1px - 120) / root.diagram-height)));
+        canvas.content-x = 0px;
+        canvas.content-y = 0px;
+    }
+    public function change-zoom(factor: float) {
+        root.zoom = max(0.15, min(3, root.zoom * factor));
+    }
+
+    FocusScope {
+        key-pressed(e) => {
+            if e.modifiers.control || e.modifiers.meta {
+                if (e.text == "s" || e.text == "S") { root.command(e.modifiers.shift ? "save-as" : "save"); return accept; }
+                if (e.text == "o" || e.text == "O") { root.command("open"); return accept; }
+                if (e.text == "n" || e.text == "N") { root.command("new"); return accept; }
+                if (e.text == "z" || e.text == "Z") { root.command(e.modifiers.shift ? "redo" : "undo"); return accept; }
+                if (e.text == "y" || e.text == "Y") { root.command("redo"); return accept; }
+                if e.text == "\\" { root.code-visible = !root.code-visible; return accept; }
+                if e.text == "0" { root.fit-diagram(); return accept; }
+            }
+            if e.text == Key.Escape { root.connecting = false; root.connect-from = ""; return accept; }
+            return reject;
+        }
+        VerticalLayout {
+            spacing: 0;
+            Rectangle {
+                height: 68px;
+                background: AppColors.surface;
+                HorizontalLayout {
+                    padding-left: 24px; padding-right: 20px; padding-top: 18px; padding-bottom: 18px; spacing: 12px;
+                    alignment: stretch;
+                    Rectangle {
+                        width: 32px; height: 32px; border-radius: 9px; background: AppColors.primary;
+                        Text { text: "f"; color: white; font-size: 26px; font-weight: 700; horizontal-alignment: center; vertical-alignment: center; }
+                    }
+                    Text { text: "fin"; font-size: 23px; font-weight: 700; color: AppColors.text; }
+                    Rectangle { width: 1px; height: 24px; background: AppColors.border; }
+                    VerticalLayout {
+                        spacing: 3px; alignment: stretch;
+                        Text { text: root.document-name + (root.dirty ? "  •" : ""); font-size: 13px; color: AppColors.secondary; }
+                        Caption { text: "MERMAID WORKSPACE"; font-size: 9px; }
+                    }
+                    Rectangle { horizontal-stretch: 1; }
+                    ToolButton { text: "New"; clicked => { root.command("new"); } }
+                    ToolButton { text: "Open"; clicked => { root.command("open"); } }
+                    ToolButton { text: "Save"; clicked => { root.command("save"); } }
+                    ToolButton { text: "Export SVG"; primary: true; enabled: root.error-message == "" && !root.busy; clicked => { root.command("export"); } }
+                }
+            }
+            Divider {}
+            HorizontalLayout {
+                spacing: 0;
+                Rectangle {
+                    width: root.code-visible ? 330px : 48px;
+                    background: AppColors.surface;
+                    VerticalLayout {
+                        spacing: 0;
+                        Rectangle {
+                            height: 52px;
+                            HorizontalLayout {
+                                padding-left: 8px; padding-right: 12px; padding-top: 10px; padding-bottom: 10px; spacing: 6px; alignment: stretch;
+                                ToolButton { text: root.code-visible ? "‹" : "›"; hint: root.code-visible ? "Collapse source editor" : "Expand source editor"; clicked => { root.code-visible = !root.code-visible; } }
+                                if root.code-visible: Caption { text: "SOURCE"; horizontal-stretch: 1; }
+                                if root.code-visible: Text { text: ".mmd"; color: AppColors.muted; font-size: 11px; }
+                            }
+                        }
+                        if root.code-visible: VerticalLayout {
+                            padding-left: 12px; padding-right: 12px; padding-bottom: 12px; spacing: 12px;
+                            TextEdit {
+                                text <=> root.source;
+                                font-family: "Liberation Mono"; font-size: 12px; wrap: no-wrap;
+                                edited(t) => { root.source-edited(t); }
+                                key-pressed(e) => {
+                                    if (e.modifiers.control || e.modifiers.meta) && (e.text == "z" || e.text == "Z") { root.command(e.modifiers.shift ? "redo" : "undo"); return accept; }
+                                    if (e.modifiers.control || e.modifiers.meta) && (e.text == "y" || e.text == "Y") { root.command("redo"); return accept; }
+                                    return reject;
+                                }
+                            }
+                            Text { text: "Write Mermaid. See it take shape."; color: AppColors.muted; font-size: 11px; }
+                        }
+                    }
+                }
+                Rectangle { width: 1px; background: AppColors.border; }
+                VerticalLayout {
+                    spacing: 0;
+                    Rectangle {
+                        height: 52px; background: AppColors.surface;
+                        HorizontalLayout {
+                            padding-left: 16px; padding-right: 14px; padding-top: 10px; padding-bottom: 10px; spacing: 4px; alignment: stretch;
+                            ToolButton { text: "Select"; active: !root.connecting; clicked => { root.connecting = false; root.connect-from = ""; } }
+                            ToolButton { text: "Connect"; active: root.connecting; enabled: root.editable; clicked => { root.connecting = !root.connecting; root.connect-from = ""; } }
+                            Rectangle { width: 1px; height: 20px; background: AppColors.border; }
+                            ToolButton { text: "+ Step"; enabled: root.editable; clicked => { root.add-node(0); } }
+                            ToolButton { text: "+ Decision"; enabled: root.editable; clicked => { root.add-node(3); } }
+                            Rectangle { horizontal-stretch: 1; }
+                            ToolButton { text: "↶"; hint: "Undo"; enabled: root.can-undo; clicked => { root.command("undo"); } }
+                            ToolButton { text: "↷"; hint: "Redo"; enabled: root.can-redo; clicked => { root.command("redo"); } }
+                        }
+                    }
+                    Divider {}
+                    Rectangle {
+                        clip: true;
+                        HorizontalLayout {
+                            spacing: 0;
+                            Rectangle {
+                                horizontal-stretch: 1;
+                                canvas := Flickable {
+                                    width: parent.width; height: parent.height;
+                                    content-width: max(self.width, root.diagram-width * root.zoom * 1px + 100px);
+                                    content-height: max(self.height, root.diagram-height * root.zoom * 1px + 120px);
+                                    TouchArea {
+                                        width: canvas.content-width; height: canvas.content-height;
+                                        scroll-event(e) => {
+                                            if e.modifiers.control || e.modifiers.meta { root.change-zoom(e.delta-y > 0px ? 1.12 : 0.89); return accept; }
+                                            return reject;
+                                        }
+                                    }
+                                    diagram-content := Rectangle {
+                                        x: (canvas.content-width - self.width) / 2;
+                                        y: max(32px, (canvas.content-height - self.height) / 2 - 16px);
+                                        width: root.diagram-width * root.zoom * 1px;
+                                        height: root.diagram-height * root.zoom * 1px;
+                                        Image { source: root.diagram; width: parent.width; height: parent.height; image-fit: contain; }
+                                        Image {
+                                            source: root.detail;
+                                            x: root.detail-x * root.zoom * 1px;
+                                            y: root.detail-y * root.zoom * 1px;
+                                            width: root.detail-width * root.zoom * 1px;
+                                            height: root.detail-height * root.zoom * 1px;
+                                            image-fit: fill;
+                                            visible: root.detail-ready && root.detail-zoom == root.zoom;
+                                        }
+                                        for node in root.nodes: Rectangle {
+                                            accessible-role: button;
+                                            accessible-label: "Node " + node.id;
+                                            accessible-action-default => { root.select-node(node.id); }
+                                            x: node.x * root.zoom * 1px - 3px; y: node.y * root.zoom * 1px - 3px;
+                                            width: node.w * root.zoom * 1px + 6px; height: node.h * root.zoom * 1px + 6px;
+                                            border-radius: 8px;
+                                            border-width: root.selected-id == node.id || root.connect-from == node.id ? 2px : hit.has-hover ? 1px : 0px;
+                                            border-color: AppColors.accent;
+                                            background: hit.has-hover ? #b5a4ff14 : transparent;
+                                            visible: root.editable;
+                                            hit := TouchArea { mouse-cursor: pointer; clicked => { root.select-node(node.id); } }
+                                        }
+                                    }
+                                }
+                                if root.error-message != "": Rectangle {
+                                    x: 20px; y: 16px; width: parent.width - 40px; height: msg.preferred-height + 24px;
+                                    background: AppColors.error-background; border-radius: 8px; border-width: 1px; border-color: AppColors.error-border;
+                                    msg := Text { x: 12px; y: 12px; width: parent.width - 24px; text: root.error-message + "\nShowing the last valid preview."; color: AppColors.error-text; font-size: 12px; wrap: word-wrap; }
+                                }
+                                Rectangle {
+                                    x: 16px; y: parent.height - 50px; height: 36px; width: 210px;
+                                    border-radius: 8px; border-width: 1px; border-color: AppColors.border; background: AppColors.surface;
+                                    HorizontalLayout { padding: 2px; spacing: 0;
+                                        ToolButton { text: "−"; clicked => { root.change-zoom(0.8); } }
+                                        Text { text: round(root.zoom * 100) + "%"; font-size: 11px; color: AppColors.muted; horizontal-alignment: center; vertical-alignment: center; }
+                                        ToolButton { text: "+"; clicked => { root.change-zoom(1.25); } }
+                                        ToolButton { text: "Fit"; clicked => { root.fit-diagram(); } }
+                                    }
+                                }
+                            }
+                            if root.selected-id != "" && root.editable: Rectangle {
+                                width: 232px; background: AppColors.surface;
+                                ScrollView { width: parent.width; height: parent.height;
+                                VerticalLayout {
+                                    padding: 16px; spacing: 12px;
+                                    HorizontalLayout {
+                                        Caption { text: "NODE / " + root.selected-id; horizontal-stretch: 1; }
+                                        ToolButton { text: "×"; clicked => { root.select-node(""); } }
+                                    }
+                                    Caption { text: "LABEL"; }
+                                    LineEdit { text <=> root.edit-label; accepted => { root.apply-node(root.edit-label, root.edit-shape); } }
+                                    Caption { text: "SHAPE"; }
+                                    ComboBox { model: ["Rectangle", "Rounded", "Terminal", "Decision", "Circle"]; current-index <=> root.edit-shape; }
+                                    ToolButton { text: "Apply changes"; active: true; clicked => { root.apply-node(root.edit-label, root.edit-shape); } }
+                                    Divider {}
+                                    Caption { text: "CONNECTIONS"; }
+                                    if root.edges.length == 0: Text { text: "Use Connect, then click\na source and a target."; color: AppColors.muted; font-size: 12px; }
+                                    ScrollView {
+                                        height: min(150px, root.edges.length * 36px);
+                                        VerticalLayout {
+                                            spacing: 4px;
+                                            for edge in root.edges: ToolButton {
+                                                text: edge.description; active: root.selected-edge == edge.index;
+                                                clicked => { root.selected-edge = edge.index; root.edge-label = edge.label; root.edge-kind = edge.kind; }
+                                            }
+                                        }
+                                    }
+                                    if root.selected-edge >= 0: VerticalLayout {
+                                        spacing: 8px;
+                                        LineEdit { text <=> root.edge-label; placeholder-text: "Connection label"; }
+                                        ComboBox { model: ["Arrow", "Line", "Dotted", "Thick"]; current-index <=> root.edge-kind; }
+                                        ToolButton { text: "Update connection"; active: true; clicked => { root.apply-edge(root.selected-edge, root.edge-label, root.edge-kind); } }
+                                        ToolButton { text: "Remove connection"; clicked => { root.delete-edge(root.selected-edge); } }
+                                    }
+                                    Rectangle { vertical-stretch: 1; }
+                                    Divider {}
+                                    ToolButton { text: "Delete node"; clicked => { root.delete-node(); } }
+                                }}
+                            }
+                        }
+                    }
+                    Divider {}
+                    Rectangle {
+                        height: 42px; background: AppColors.surface;
+                        HorizontalLayout {
+                            padding-left: 18px; padding-right: 16px; padding-top: 6px; padding-bottom: 6px; spacing: 10px; alignment: stretch;
+                            Text { text: root.connecting ? (root.connect-from == "" ? "Click a source node" : "Now click a target node · Esc to cancel") : "Drag canvas to pan · Scroll to explore"; color: AppColors.muted; font-size: 11px; horizontal-stretch: 1; }
+                            if root.editable: ComboBox { width: 76px; model: ["TD", "LR", "BT", "RL"]; current-value: root.direction; selected(value) => { root.set-direction(value); } }
+                        }
+                    }
+                }
+            }
+            Divider {}
+            Rectangle {
+                height: 30px; background: AppColors.canvas;
+                HorizontalLayout { padding-left: 16px; padding-right: 16px; spacing: 8px; alignment: stretch;
+                    Rectangle { width: 6px; height: 6px; border-radius: 3px; background: root.error-message != "" ? #e89b9b : root.busy ? #d9bd7d : #87c4a1; }
+                    Text { text: root.busy ? "Rendering…" : root.status-message; color: AppColors.muted; font-size: 10px; horizontal-stretch: 1; }
+                    Text { text: root.editable ? "FLOWCHART · TWO-WAY SYNC" : root.visual-note; color: AppColors.muted; font-size: 9px; }
+                }
+            }
+        }
+    }
+}

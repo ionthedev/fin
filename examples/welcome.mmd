@@ -1,0 +1,10 @@
+flowchart TD
+    idea([A little idea])
+    draft[Make it tangible]
+    review{Ready to share?}
+    ship([Out in the world])
+
+    idea --> draft
+    draft --> review
+    review -->|A few tweaks| draft
+    review -->|Yes| ship

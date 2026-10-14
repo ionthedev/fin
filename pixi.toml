@@ -1,0 +1,48 @@
+[workspace]
+name = "fin"
+description = "Development tools for the Fin native Mermaid workspace"
+channels = ["conda-forge"]
+platforms = ["linux-64", "linux-aarch64", "osx-64", "osx-arm64", "win-64", "win-arm64"]
+
+[dependencies]
+# Includes Cargo, rustfmt, Clippy, and the native Rust standard library.
+rust = "=1.99.0"
+git = ">=2,<3"
+pkg-config = ">=0.29,<1"
+c-compiler = "*"
+cxx-compiler = "*"
+
+[target.linux.dependencies]
+fontconfig = ">=2,<3"
+# Despite the package name, it supplies DejaVuSans.ttf for diagram labels.
+font-ttf-dejavu-sans-mono = "=2.37"
+libxkbcommon = ">=1,<2"
+wayland = ">=1,<2"
+xorg-libx11 = ">=1,<2"
+libxcb = ">=1,<2"
+
+[activation.env]
+# Keep builds linked against Pixi libraries separate from host-toolchain builds.
+CARGO_TARGET_DIR = "$PIXI_PROJECT_ROOT/target/pixi"
+
+[target.win.activation.env]
+CARGO_TARGET_DIR = "%PIXI_PROJECT_ROOT%/target/pixi"
+
+[target.linux.activation.env]
+# fontdb reads this config directly; include Pixi's fonts as well as system fonts.
+FONTCONFIG_FILE = "$CONDA_PREFIX/etc/fonts/fonts.conf"
+
+[tasks]
+run = { cmd = "cargo run --release --locked --bin fin --", description = "Run the desktop editor; append a diagram path or CLI options" }
+tui = { cmd = "cargo run --release --locked --no-default-features --features tui --bin fin-tui --", description = "Run the standalone terminal editor; append a diagram path or CLI options" }
+build = { cmd = "cargo build --release --locked --all-features --bins", description = "Build both applications" }
+build-tui = { cmd = "cargo build --release --locked --no-default-features --features tui --bin fin-tui", description = "Build the terminal application without desktop dependencies" }
+check = "cargo check --locked --all-targets --all-features"
+check-tui = "cargo check --locked --no-default-features --features tui --all-targets"
+fmt = "cargo fmt --all"
+fmt-check = "cargo fmt --all --check"
+lint = "cargo clippy --locked --all-targets --all-features -- -D warnings"
+lint-tui = "cargo clippy --locked --no-default-features --features tui --all-targets -- -D warnings"
+test = "cargo test --locked --all-targets --all-features"
+test-tui = "cargo test --locked --no-default-features --features tui --all-targets"
+verify = { depends-on = ["fmt-check", "lint", "lint-tui", "test", "test-tui"], description = "Run formatting, strict linting, and tests for both feature configurations" }
