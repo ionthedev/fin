@@ -138,7 +138,7 @@ fin-tui --completions bash  # Also zsh and fish
 
 Each job installs its explicit Rust target, checks formatting, runs tests and Clippy for both interfaces and the terminal-only feature set, builds both optimized executables, and uploads the matching archive. The packaged `fin-tui` is built without desktop features. The builds run on the matching CPU architecture, including native Apple Silicon and Windows/Linux ARM64 runners. Separate target cache keys keep the architectures isolated.
 
-Download an archive from the completed workflow's **Artifacts** section and extract it. Archives include `fin` and `fin-tui` (`.exe` on Windows), documentation, examples, and bundled font license; the Unix archives preserve executable permissions for both applications. Artifacts are retained for 14 days. Linux binaries target Ubuntu 24.04's glibc and require compatible system libraries; they are not static binaries. Installers, GitHub Release publishing, code signing, and macOS notarization are not configured.
+Download an archive from the completed workflow's **Artifacts** section and extract it. Archives include `fin` and `fin-tui` (`.exe` on Windows), documentation, examples, the project license, and bundled font license; the Unix archives preserve executable permissions for both applications. Artifacts are retained for 14 days. Linux binaries target Ubuntu 24.04's glibc and require compatible system libraries; they are not static binaries. Installers, GitHub Release publishing, code signing, and macOS notarization are not configured.
 
 ## Desktop interface
 
@@ -188,5 +188,9 @@ FIN_SNAPSHOT_DIR=/tmp/fin-ui cargo test --locked software_renderer_draws
 `src/lib.rs` exposes the shared Mermaid core: `src/flow.rs` owns the safe editable flowchart subset, `src/render.rs` performs background layout, `src/preview.rs` rasterizes SVG regions, and `src/document.rs` owns history and atomic persistence. `ui/app.slint` and `src/main.rs` connect the desktop interface; `src/tui/` provides the Ratatui interface, with CLI options in `src/tui_cli.rs` and its standalone entry point in `src/bin/fin-tui.rs`.
 
 The desktop uses separate workers for source layout and viewport rendering; queued work is coalesced, and stale replies never replace a newer graph or view. A bounded overview remains visible during navigation until the detailed viewport arrives. Tests cover parser round trips, retained unsupported source, rendering and hit bounds, atomic saves, real UI callbacks, zoom/DPI changes, undo/redo, and out-of-order replies. The `desktop` and `tui` Cargo features are both enabled by default; disabling default features and enabling only `tui` keeps Slint and its windowing dependencies out of the terminal executable.
+
+## License
+
+Copyright © 2026 ionthedev. Fin's original code is licensed under the [WTFPL, Version 2](LICENSE) — Do What The Fuck You Want To Public License.
 
 The bundled Liberation Mono editor font is licensed under SIL OFL 1.1; see `assets/FONT-LICENSE.txt`. Slint and the other dependencies retain their respective upstream licenses; review Slint's licensing terms when distributing the application.

@@ -107,7 +107,7 @@ jobs:
           cp "target/$RUST_TARGET/release/fin" "$package/fin"
           cp "target/$RUST_TARGET/release/fin-tui" "$package/fin-tui"
           chmod +x "$package/fin" "$package/fin-tui"
-          cp README.md "$package/"
+          cp README.md LICENSE "$package/"
           cp assets/FONT-LICENSE.txt "$package/assets/"
           cp -R docs examples "$package/"
           tar -czf "dist/$ARTIFACT_NAME.tar.gz" -C dist "$ARTIFACT_NAME"
@@ -119,7 +119,7 @@ jobs:
           New-Item -ItemType Directory -Force -Path "$package/assets" | Out-Null
           Copy-Item "target/$env:RUST_TARGET/release/fin.exe" "$package/fin.exe"
           Copy-Item "target/$env:RUST_TARGET/release/fin-tui.exe" "$package/fin-tui.exe"
-          Copy-Item README.md "$package/"
+          Copy-Item README.md, LICENSE "$package/"
           Copy-Item assets/FONT-LICENSE.txt "$package/assets/"
           Copy-Item docs, examples "$package/" -Recurse
           Compress-Archive -Path $package -DestinationPath "dist/$env:ARTIFACT_NAME.zip"

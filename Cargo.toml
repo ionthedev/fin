@@ -3,6 +3,7 @@ name = "fin"
 version = "0.1.0"
 edition = "2024"
 description = "A minimal native Mermaid workspace"
+license = "WTFPL"
 rust-version = "1.92"
 default-run = "fin"
 
